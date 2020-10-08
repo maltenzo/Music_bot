@@ -3,7 +3,7 @@ import datetime as dt
 import re
 import random
 import typing as t
-
+from enum import Enum
 import discord
 import wavelink
 from discord.ext import commands
@@ -41,14 +41,22 @@ class NoMoreTracks(commands.CommandError):
 class NoPrevTracks(commands.CommandError):
     pass
 
+class InvalidReepatMode(commands.CommandError):
+    pass
+
 class TooHighVolume(commands.CommandError):
     pass
+class Repeat_mode(Enum):
+    NONE = 0
+    ONE = 1
+    ALL = 2
+
 
 class Queue:
     def __init__(self):
         self._queue = []
         self.position = 0
-
+        self.repeat_mode = Repeat_mode.NONE
 
     @property
     def is_empty(self):
@@ -113,7 +121,9 @@ class Queue:
 
         if self.position <= len(self._queue) -1:
             return self._queue[self.position]
-
+        elif self.repeat_mode == Repeat_mode.ALL:
+            self.position=0
+            return self._queue[self.position]
 
 
     def shuffle(self):
@@ -126,6 +136,14 @@ class Queue:
         self._queue = self._queue[:self.position + 1]
         self._queue.extend(upcoming)
 
+
+    def set_repeat_mode(self, mode):
+        if mode == "none":
+            self.repeat_mode = Repeat_mode.NONE
+        elif mode == "1":
+            self.repeat_mode = Repeat_mode.ONE
+        if mode == "all":
+            self.repeat_mode = Repeat_mode.ALL
     def empty(self):
         self._queue.clear()
         self.position = 0
@@ -215,6 +233,8 @@ class Player(wavelink.Player):
         except QueueIsEmpty:
             pass
 
+    async def repeat_track(self):
+        await self.play(self.queue.current_track)
 class Music(commands.Cog, wavelink.WavelinkMixin):
     def  __init__(self, bot):
         self.bot = bot
@@ -236,7 +256,10 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
     @wavelink.WavelinkMixin.listener("on_track_end")
     @wavelink.WavelinkMixin.listener("on_track_exception")
     async def on_player_stop(self, node, payload):
-        await payload.player.advance()
+        if payload.player.queue.repeat_mode == Repeat_mode.ONE:
+            await payload.player.repeat_track()
+        else:
+            await payload.player.advance()
 
     async def cog_check(self, ctx):
         if isinstance(ctx.channel, discord.DMChannel):
@@ -348,8 +371,8 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
         player = self.get_player(ctx)
         if not player.queue.upcoming and not player.is_playing:
             raise NoMoreTracks
-        if not player.queue.upcoming and player.is_playing:
-            await player.stop()
+        # if not player.queue.upcoming and player.is_playing:
+        #     await player.stop()
 
         await ctx.send("Skipeando bro")
         await player.stop()
@@ -433,6 +456,16 @@ class Music(commands.Cog, wavelink.WavelinkMixin):
                 inline = False
            )
         msg = await ctx.send(embed=embed)
+
+
+    @commands.command(name="repeat", aliases=["loop"])
+    async def repeat_command(self, ctx, mode:str ):
+        if mode not in ("none", "1", "all"):
+            raise InvalidReepatMode()
+
+        player = self.get_player(ctx)
+        player.queue.set_repeat_mode(mode)
+        await ctx.send(f"El modo de repeticion se seteo a {mode}")
 
     @queue_command.error
     async def queue_command_error(self, ctx, exc):
